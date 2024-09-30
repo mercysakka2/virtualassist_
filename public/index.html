@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Speech To Text To Speech</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f0f4f8;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        #statusMessage {
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+            color: #3498db;
+            font-size: 1.1em;
+        }
+        #recordButton {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background-color: #3498db;
+            border: none;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: fixed;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 10;
+        }
+        #recordButton:hover {
+            background-color: #2980b9;
+            box-shadow: 0 6px 8px rgba(0,0,0,0.15);
+        }
+        #recordButton:active {
+            transform: translateY(-50%) scale(0.95);
+        }
+        #recordButton.recording {
+            background-color: #e74c3c;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% {
+                transform: translateY(-50%) scale(1);
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.7);
+            }
+            70% {
+                transform: translateY(-50%) scale(1.05);
+                box-shadow: 0 0 0 10px rgba(231, 76, 60, 0);
+            }
+            100% {
+                transform: translateY(-50%) scale(1);
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0);
+            }
+        }
+        #chatContainer {
+            width: 100%;
+            margin-bottom: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        #transcription, #geminiResponse {
+            width: 100%;
+            padding: 15px;
+            border-bottom: 1px solid #ecf0f1;
+            min-height: 100px;
+        }
+        #transcription {
+            background-color: #f8f9fa;
+        }
+        #geminiResponse {
+            white-space: pre-wrap;
+            line-height: 1.6;
+            font-size: 16px;
+        }
+        audio {
+            display: block;
+            width: 100%;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Klaris Virtual Assistant</h1>
+    <div id="statusMessage">Tekan tombol untuk mulai bertanya</div>
+    <div id="chatContainer">
+        <div id="transcription"></div>
+        <div id="geminiResponse"></div>
+        <button id="recordButton">Rekam</button>
+    </div>
+    <audio id="audioResponse" controls></audio>
+
+    <script>
+        const recordButton = document.getElementById('recordButton');
+        const statusMessage = document.getElementById('statusMessage');
+        const transcriptionDiv = document.getElementById('transcription');
+        const geminiResponseDiv = document.getElementById('geminiResponse');
+        const audioResponse = document.getElementById('audioResponse');
+
+        let recognition;
+        let isRecording = false;
+
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false;
+            recognition.lang = 'id-ID';
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+
+            recognition.onstart = () => {
+                isRecording = true;
+                statusMessage.textContent = 'Mendengarkan...';
+                recordButton.classList.add('recording');
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                transcriptionDiv.textContent = `User: ${transcript}`;
+                processWithGemini(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                console.error('Error:', event.error);
+                statusMessage.textContent = `Error: ${event.error}`;
+                resetUI();
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                resetUI();
+            };
+        } else {
+            statusMessage.textContent = 'Browser Anda tidak mendukung pengenalan suara.';
+            recordButton.disabled = true;
+        }
+
+        recordButton.onclick = () => {
+            if (!isRecording) {
+                recognition.start();
+            } else {
+                recognition.stop();
+            }
+        };
+
+        async function processWithGemini(text) {
+            statusMessage.textContent = 'Memproses dengan Gemini...';
+            try {
+                const response = await fetch('/process-speech', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ text })
+                });
+                const data = await response.json();
+                if (data.text && data.audioUrl) {
+                    geminiResponseDiv.textContent = formatResponse(data.text);
+                    audioResponse.src = data.audioUrl;
+                    statusMessage.textContent = 'Respons siap. Memutar audio...';
+                    audioResponse.play(); // Auto-play the audio response
+                } else {
+                    throw new Error('Respons tidak valid dari server');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                statusMessage.textContent = 'Terjadi kesalahan saat memproses dengan Gemini.';
+            }
+        }
+
+        function formatResponse(text) {
+            // Remove excessive asterisks and format the text
+            return text.replace(/\*{2,}/g, '')  // Remove multiple asterisks
+                       .replace(/\*([^\*]+)\*/g, '$1')  // Remove single asterisks
+                       .trim()  // Remove leading/trailing whitespace
+                       .replace(/\n{3,}/g, '\n\n');  // Replace multiple newlines with double newlines
+        }
+
+        function resetUI() {
+            recordButton.classList.remove('recording');
+            recordButton.textContent = 'Rekam';
+            if (!isRecording && !geminiResponseDiv.textContent) {
+                statusMessage.textContent = 'Tekan tombol untuk mulai bertanya';
+            }
+        }
+    </script>
+</body>
+</html>
